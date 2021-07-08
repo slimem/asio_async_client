@@ -1,7 +1,9 @@
 #ifndef __ASYNC_CLIENT_H
 #define __ASYNC_CLIENT_H
 
+#include <iostream>
 #include <string>
+#include <thread>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -27,7 +29,7 @@ public:
 
     }
 
-[nodiscard] bool start() {
+bool start() {
     try {
 
     } catch (std::exception& e) {
@@ -39,19 +41,14 @@ public:
 
 void stop() {
     // attempt to stop the asio context, then join its thread
-	_context.stop();
-	// maybe the context will be busy, so we have to wait
-	// for it to finish using std::thread.join()
-	if (_thContext.joinable()) {
-		_thContext.join();
-	}
-	std::cout << "Info      [BIN]: Shutting down client.\n";
-	
-	_exitCleanupThread = true;
-	if (_cleanupThread.joinable()) {
-		_cleanupThread.join();
-	}
-	std::cout << "Info      [BIN]: Successfully shut down client.\n";
+    _context.stop();
+    // maybe the context will be busy, so we have to wait
+    // for it to finish using std::thread.join()
+    if (_thContext.joinable()) {
+        _thContext.join();
+    }
+    
+    std::cout << "Info      [BIN]: Successfully shut down client.\n";
 }
 
 private:
@@ -62,10 +59,10 @@ private:
     http::response<http::string_body> _response;
 
 
-    std::string _host,
-    std::string _port,
-    std::string _target,
-    int version;
+    std::string _host;
+    std::string _port;
+    std::string _target;
+    int _version;
 
 };
 
