@@ -139,7 +139,7 @@ bool start() {
     _request.method(http::verb::get);
     _request.target(_target);
     _request.set(http::field::host, _host);
-    _request.set(http::field::authorization, "Basic Z3Vlc3Q6dnBndWVzdA==");
+    _request.set(http::field::authorization, "Basic " CREDS);
     _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
     try {
