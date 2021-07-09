@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <memory>
+#include <chrono>
 // #include <boost/beast/core/detail/config.hpp>
 // #include <boost/beast/core/basic_stream.hpp>
 // #include <boost/beast/core/rate_policy.hpp>
@@ -91,7 +92,6 @@ void write() {
         _request,
         [this] (const boost::system::error_code& ec, std::size_t bytes) {
             boost::ignore_unused(bytes);
-
             if (!ec) {
                 if (VERBOSITY > 1) {
                     std::cout << ">\n" << _request << "-----------\n";
@@ -113,8 +113,21 @@ void read() {
         [this] (const boost::system::error_code& ec, std::size_t bytes) {
             boost::ignore_unused(bytes);
             if (!ec) {
-                std::cout << _response << std::endl;
-                // write();
+                if (VERBOSITY > 1) {
+                    std::cout << "RESULT " << _response.result_int() << "\n";
+                    std::cout << "<\n" << _response.body() << "-----------\n";
+
+                }
+                
+                // returns a boost::string_view
+                auto x = _response[http::field::set_cookie];
+                _sessionCookie = x.data();
+
+                boost::system::error_code sec; // socket error code
+                _socket.shutdown(asio::ip::tcp::socket::shutdown_both, sec);
+                if (sec && (sec != boost::system::errc::not_connected)) {
+                    std::cerr << "Error      [BINARY]: Unable to shutdown connection: " << sec.message() << "\n";
+                }
             }
         }
     );
@@ -126,6 +139,7 @@ bool start() {
     _request.method(http::verb::get);
     _request.target(_target);
     _request.set(http::field::host, _host);
+    _request.set(http::field::authorization, "Basic Z3Vlc3Q6dnBndWVzdA==");
     _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
     try {
@@ -167,6 +181,7 @@ private:
     http::request<http::empty_body> _request;
     http::response<http::string_body> _response;
     beast::flat_buffer _buffer; // data buffer
+    std::string _sessionCookie;
     // beast::AsyncWriteStream _strm;
 
     std::string _host;
