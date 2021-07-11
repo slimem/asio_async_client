@@ -26,24 +26,69 @@ namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
 
+class Base64Encoder {
+public:
+    static std::string base64_encode(const uint8_t* buf, unsigned int bufLen) {
+        const char base64_chars[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string ret;
+        int i = 0;
+        int j = 0;
+        uint8_t char_array_3[3];
+        uint8_t char_array_4[4];
+
+        while (bufLen--) {
+            char_array_3[i++] = *(buf++);
+            if (i == 3) {
+                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+                char_array_4[3] = char_array_3[2] & 0x3f;
+
+                for(i = 0; (i <4) ; i++) {
+                    ret += base64_chars[char_array_4[i]];
+                }
+                i = 0;
+            }
+        }
+
+        if (i) {
+            for (j = i; j < 3; ++j) {
+                char_array_3[j] = '\0';
+            }
+
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+            for (j = 0; (j < i + 1); j++) {
+                ret += base64_chars[char_array_4[j]];
+            }
+            while((i++ < 3)) {
+                ret += '=';
+            }
+        }
+        return ret;
+    }
+};
+
 class AsyncClient :
     public std::enable_shared_from_this<AsyncClient> {
 
 public:
     explicit AsyncClient(
         const std::string& host,
-        const std::string& port,
         const std::string& target,
+        const std::string& user,
+        const std::string& passwd,
         const std::string& version
     ) : 
         _resolver(_context),
         _socket(_context),
         _host(host),
-        _port(port),
-        _target(target) {
+        _target(target),
+        _user(user),
+        _passwd(passwd) {
             
-        
-        std::cout << "Called constructor...\n";
         if (version == "1.0") {
             _version = 10;
         } else {
@@ -139,7 +184,8 @@ bool start() {
     _request.method(http::verb::get);
     _request.target(_target);
     _request.set(http::field::host, _host);
-    _request.set(http::field::authorization, "Basic " CREDS);
+    std::string auth64 = _user + ":" + _passwd;
+    _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
     _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
     try {
@@ -184,9 +230,11 @@ private:
     std::string _sessionCookie;
     // beast::AsyncWriteStream _strm;
 
+    std::string _port {"80"};
     std::string _host;
-    std::string _port;
     std::string _target;
+    std::string _user;
+    std::string _passwd;
     int _version;
 
 };
