@@ -12,6 +12,7 @@
 #include <thread>
 #include <memory>
 #include <chrono>
+#include <future>
 // #include <boost/beast/core/detail/config.hpp>
 // #include <boost/beast/core/basic_stream.hpp>
 // #include <boost/beast/core/rate_policy.hpp>
@@ -74,123 +75,56 @@ public:
 class AsyncClient :
     public std::enable_shared_from_this<AsyncClient> {
 
+    enum class State {
+        LOGIN,
+        READ_DATA,
+        UNKNOWN,
+    };
+
+    void resolveDomain() {
+        _resolver.async_resolve(
+        _host.c_str(),
+        _port.c_str(),
+        [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::results_type results) {
+            if (!ec) {
+                std::cout << "Successfully resolved " << _host << ":" << _port << "\n";
+                // connect(results);
+
+            } else {
+                std::cerr << "Error      [BINARY]: Domain resolve error: " << ec.message() << "\n";
+            }
+        }
+        );
+    }
+
 public:
     explicit AsyncClient(
         const std::string& host,
-        const std::string& target,
         const std::string& user,
         const std::string& passwd,
-        const std::string& version
+        const std::string& version,
+        bool loginRequired = false
     ) : 
         _resolver(_context),
         _socket(_context),
         _host(host),
-        _target(target),
         _user(user),
         _passwd(passwd) {
-            
+
+        if (loginRequired) {
+            _state = State::LOGIN;
+        } else {
+            _state = State::READ_DATA;
+        }
+
         if (version == "1.0") {
             _version = 10;
-        } else {
-            _version = 11; // default version is 1.1
         }
-    }
 
-    ~AsyncClient() { std::cout << "Stopping server...\n";stop(); }
-
-void resolveDomain() {
-    _resolver.async_resolve(
-    _host.c_str(),
-    _port.c_str(),
-    [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::results_type results) {
-        if (!ec) {
-            std::cout << "Successfully resolved " << _host << ":" << _port << "\n";
-            connect(results);
-
-        } else {
-            std::cerr << "Error      [BINARY]: Domain resolve error: " << ec.message() << "\n";
-        }
-    }
-    );
-}
-
-void connect(asio::ip::tcp::resolver::results_type& results) {
-    std::cout << "Results\n";
-    asio::async_connect(
-        _socket,
-        results.begin(),
-        results.end(),
-        [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator it) {
-            if (!ec) {
-                std::cout << "Successfully connected to host " << _host << ":" << _port << "\n";
-                write();
-            } else {
-                std::cerr << "Error      [BINARY]: Unable to connecto to host: " << ec.message() << "\n";
-            }
-        }
-    );
-}
-
-void write() {
-    http::async_write(
-        _socket,
-        _request,
-        [this] (const boost::system::error_code& ec, std::size_t bytes) {
-            boost::ignore_unused(bytes);
-            if (!ec) {
-                if (VERBOSITY > 1) {
-                    std::cout << ">\n" << _request << "-----------\n";
-                }
-                read();
-            } else {
-                std::cerr << "Error      [BINARY]: Unable send request: " << ec.message() << "\n";
-            }
-
-        }
-    );
-}
-
-void read() {
-    http::async_read(
-        _socket,
-        _buffer,
-        _response,
-        [this] (const boost::system::error_code& ec, std::size_t bytes) {
-            boost::ignore_unused(bytes);
-            if (!ec) {
-                if (VERBOSITY > 1) {
-                    std::cout << "RESULT " << _response.result_int() << "\n";
-                    std::cout << "<\n" << _response.body() << "-----------\n";
-
-                }
-                
-                // returns a boost::string_view
-                auto x = _response[http::field::set_cookie];
-                _sessionCookie = x.data();
-
-                boost::system::error_code sec; // socket error code
-                _socket.shutdown(asio::ip::tcp::socket::shutdown_both, sec);
-                if (sec && (sec != boost::system::errc::not_connected)) {
-                    std::cerr << "Error      [BINARY]: Unable to shutdown connection: " << sec.message() << "\n";
-                }
-            }
-        }
-    );
-}
-
-bool start() {
-    // start with a get request
-    _request.version(_version);
-    _request.method(http::verb::get);
-    _request.target(_target);
-    _request.set(http::field::host, _host);
-    std::string auth64 = _user + ":" + _passwd;
-    _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
-    _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
-
-    try {
+        try {
         // resolve demain asynchronously
-        resolveDomain();
+        // resolveDomain().get();
+        // std::cout << "AFTER RESLOVING\n";
 
         // run io context
         _thContext =
@@ -198,25 +132,123 @@ bool start() {
                 [this] () { _context.run(); }
             );
         
-    } catch (std::exception& e) {
-        std::cerr << "Error      [BINARY]: Could not start client. Reason:\n" << e.what() << "\n";
-        stop();
-        return false;
+        } catch (std::exception& e) {
+            std::cerr << "Error      [BINARY]: Could not start client. Reason:\n" << e.what() << "\n";
+            stop();
+            // return false;
+        }
     }
-    return true;
-}
 
-void stop() {
-    // attempt to stop the asio context, then join its thread
-    _context.stop();
-    // maybe the context will be busy, so we have to wait
-    // for it to finish using std::thread.join()
-    if (_thContext.joinable()) {
-        _thContext.join();
+    ~AsyncClient() { std::cout << "Stopping server...\n";stop(); }
+
+
+
+    auto connect(asio::ip::tcp::resolver::results_type& results) {
+        return asio::async_connect(
+            _socket,
+            results.begin(),
+            results.end(),
+            [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator it) {
+                if (!ec) {
+                    // std::cout << "Successfully connected to host " << _host << ":" << _port << "\n";
+                    write();
+                } else {
+                    std::cerr << "Error      [BINARY]: Unable to connecto to host: " << ec.message() << "\n";
+                }
+            }
+        );
     }
+
+    void write() {
+        http::async_write(
+            _socket,
+            _request,
+            [this] (const boost::system::error_code& ec, std::size_t bytes) {
+                boost::ignore_unused(bytes);
+                if (!ec) {
+                    if (VERBOSITY > 1) {
+                        // std::cout << ">\n" << _request << "-----------\n";
+                    }
+                    read();
+                } else {
+                    std::cerr << "Error      [BINARY]: Unable send request: " << ec.message() << "\n";
+                }
+
+            }
+        );
+    }
+
+    void read() {
+        http::async_read(
+            _socket,
+            _buffer,
+            _response,
+            [this] (const boost::system::error_code& ec, std::size_t bytes) {
+                boost::ignore_unused(bytes);
+                if (!ec) {
+                    if (VERBOSITY > 1) {
+                        std::cout << "RESULT " << _response.result_int() << "\n";
+                        std::cout << "<\n" << _response.body() << "-----------\n";
+
+                    }
+
+                    // returns a boost::string_view
+                    auto x = _response[http::field::set_cookie];
+                    _sessionCookie = x.data();
+
+                    boost::system::error_code sec; // socket error code
+                    _socket.shutdown(asio::ip::tcp::socket::shutdown_both, sec);
+                    if (sec && (sec != boost::system::errc::not_connected)) {
+                        std::cerr << "Error      [BINARY]: Unable to shutdown connection: " << sec.message() << "\n";
+                    }
+                }
+            }
+        );
+    }
+
+    bool start() {
+        // start with a get request
+        _request.version(_version);
+        _request.method(http::verb::get);
+        _request.target(_target);
+        _request.set(http::field::host, _host);
+        std::string auth64 = _user + ":" + _passwd;
+        _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
+        _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+
+        try {
+            // resolve demain asynchronously
+            // resolveDomain();
+
+        } catch (std::exception& e) {
+            std::cerr << "Error      [BINARY]: Could not start client. Reason:\n" << e.what() << "\n";
+            stop();
+            return false;
+        }
+        return true;
+    }
+
+    void stop() {
+        // attempt to stop the asio context, then join its thread
+        _context.stop();
+        // maybe the context will be busy, so we have to wait
+        // for it to finish using std::thread.join()
+        if (_thContext.joinable()) {
+            _thContext.join();
+        }
     
-    std::cout << "Info      [BIN]: Successfully shut down client.\n";
-}
+        std::cout << "Info      [BIN]: Successfully shut down client.\n";
+    }
+
+    void prepareRequest() {
+        _request.version(_version);
+        _request.method(http::verb::get);
+        _request.target(_target);
+        _request.set(http::field::host, _host);
+        std::string auth64 = _user + ":" + _passwd;
+        _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
+        _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+    }
 
 private:
 
@@ -229,13 +261,14 @@ private:
     beast::flat_buffer _buffer; // data buffer
     std::string _sessionCookie;
     // beast::AsyncWriteStream _strm;
+    std::atomic<State> _state {State::UNKNOWN};
 
     std::string _port {"80"};
     std::string _host;
-    std::string _target;
+    std::string _target {"/"};
     std::string _user;
     std::string _passwd;
-    int _version;
+    int _version {11};  // default version is 1.1
 
 };
 
