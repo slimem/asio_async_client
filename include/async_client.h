@@ -13,15 +13,8 @@
 #include <memory>
 #include <chrono>
 #include <future>
-// #include <boost/beast/core/detail/config.hpp>
-// #include <boost/beast/core/basic_stream.hpp>
-// #include <boost/beast/core/rate_policy.hpp>
-// #include <boost/asio/executor.hpp>
-// #include <boost/asio/ip/tcp.hpp>
-// #include <boost/asio.hpp>
-// #include <boost/beast.hpp>
 
-#define VERBOSITY 2
+#define VERBOSITY 1
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
@@ -118,16 +111,13 @@ public:
 
 
         try {
-        // resolve demain asynchronously
-        // std::cout << "AFTER RESLOVING\n";
-        std::cout << "started thread!\n";
-        // run io context
-        _thContext =
-            std::thread(
-                [this] () { _context.run(); }
-            );
-        
-        resolveDomain();
+            // run io context
+            // _thContext =
+                // std::thread(
+                    // [this] () { _context.run(); }
+                // );
+                // _context.run();
+
         } catch (std::exception& e) {
             std::cerr << "Error      [BINARY]: Could not start client. Reason:\n" << e.what() << "\n";
             stop();
@@ -140,6 +130,15 @@ public:
         stop();
     }
 
+    const std::string& getData() {
+        resolveDomain();
+        
+        _context.run();
+        _context.reset();
+
+        return _data;
+    }
+
     void startCommunication() {
         resolveDomain();
     }
@@ -150,15 +149,15 @@ public:
         _port.c_str(),
         [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::results_type results) {
             if (!ec) {
-                    std::cout << "Successfully resolved " << _host << ":" << _port << "\n";
-                // if (VERBOSITY > 1) {
                     // std::cout << "Successfully resolved " << _host << ":" << _port << "\n";
-                // }
+                if (VERBOSITY > 1) {
+                    std::cout << "Successfully resolved " << _host << ":" << _port << "\n";
+                }
                 // stop();
                 // exit(1);
-                // configureRequests();
                 _result = results;
-                connect(_result);
+                // connect(_result);
+                connect();
             } else {
                 std::cerr << "Error      [BINARY]: Domain resolve error: " << ec.message() << "\n";
                 stop();
@@ -168,15 +167,15 @@ public:
         );
     }
 
-    void connect(asio::ip::tcp::resolver::results_type& results) {
+    void connect() {
 
         // configure requests according to state
         configureRequests();
 
         return asio::async_connect(
             _socket,
-            results.begin(),
-            results.end(),
+            _result.begin(),
+            _result.end(),
             [this] (const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator it) {
                 if (!ec) {
                     if (VERBOSITY > 1) {
@@ -200,14 +199,13 @@ public:
                 boost::ignore_unused(bytes);
                 if (!ec) {
                     if (VERBOSITY > 1) {
-                        // std::cout << ">\n" << _request << "-----------\n";
                         std::ostringstream os;
                         os << _request;
                         std::cout << "\n";
                         splitByLine(os.str(), ">  ");
                         std::cout << "\n";
                     }
-                    std::cout << "READING\n";
+
                     read();
                 } else {
                     std::cerr << "Error      [BINARY]: Unable to send request: " << ec.message() << "\n";
@@ -218,6 +216,8 @@ public:
     }
 
     void read() {
+        // response must be cleared to avoid undefined behaviour
+        _response = {};
         http::async_read(
             _socket,
             _buffer,
@@ -226,34 +226,50 @@ public:
                 boost::ignore_unused(bytes);
                 if (!ec) {
                     if (VERBOSITY > 1) {
-                        // std::cout << "thread" << std::this_thread::get_id() <<  " RESULT " << _response.result_int() << "\n";
-                        // std::cout << "<\n" << _response.body() << "-----------\n";
-                        std::ostringstream os;
-                        os << _response;
-                        std::cout << "\n";
-                        splitByLine(os.str(), "<  ");
-                        std::cout << "\n";
+                        //std::ostringstream os;
+                        //os << _response;
+                        //std::cout << "\n";
+                        //splitByLine(os.str(), "<  ");
+                        //std::cout << "\n";
+//
+                        //std::ostringstream os2;
+                        //os2 << _response.body();
+                        //std::cout << "\n";
+                        //splitByLine(os2.str(), "<  ");
+                        //std::cout << "\n";
                     }
 
                     
                     // we expect a server cookie that we should store for later requests
-                    std::cout << "STATE = " << getState() <<"\n";
                     if (_state == State::LOGIN) {
-                        // we expect a 302 response (redirection)
-                        if (_response.result_int() != 302) {
-                            std::cerr << "Error      [BINARY]: Expected redirection response 302, received " << _response.result_int() << "\n";
-                            stop();
-                            exit(1);
-                        }
-                        // returns a boost::string_view
-                        auto&& x = _response[http::field::set_cookie];
-                        _sessionCookie = x.data();
+                       // we expect a 302 response (redirection)
+                       if (_response.result_int() != 302) {
+                           std::cerr << "Error      [BINARY]: Expected redirection response 302, received " << _response.result_int() << "\n";
+                       }
 
-                        // _state = State::READ_DATA;
+                    //    returns a boost::string_view
+                       auto&& x = _response[http::field::set_cookie];
+                    //    std::cout << x << std::endl;
+                        std::ostringstream os;
+                        os << x;
+                        _sessionCookie = os.str();
+
+                        // another way to iterate over cookies
+#if 0
+                        auto&& rang = _response.equal_range(boost::beast::string_view("Set-Cookie"));
+                        for (auto&& s = rang.first; s != rang.second; s++) {
+                            std::cout << "s->name:" << s->name() << ", s->value:" << s->value() << std::endl << std::endl;
+                        }
+#endif
+
                     } else if (_state == State::READ_DATA) {
-                        // we read the data instead
-                        std::cout << "RESPONSE\n";
-                        std::cout <<_response.body();
+
+                        if (_response.result_int() != 200) {
+                            std::cerr << "Error      [BINARY]: Expected response 200, received " << _response.result_int() << "\n";
+                            
+                        } else {
+                            _data = _response.body();
+                        }
                     }
 
                     boost::system::error_code sec; // socket error code
@@ -264,16 +280,12 @@ public:
                         exit(1);
                     }
 
-                    // connect(_result);
-                    // stop();
-                    // exit(1);
-
                     try {
                         if (_state == State::LOGIN) {
-                            _state = State::READ_DATA;
-                            resolveDomain();
-                            // connect(_result);
-                            // std::cout << "reached here\n";
+                           _state = State::READ_DATA;
+                            // resolveDomain();
+                            connect();
+                            // write();
                         }
                     } catch (std::exception& e) {
                         std::cerr << "Error      [BINARY]: Could not reslove domain. Reason:\n" << e.what() << "\n";
@@ -285,14 +297,6 @@ public:
     }
 
     bool configureRequests() {
-        // start with a get request
-        // _request.version(_version);
-        // _request.method(http::verb::get);
-        // _request.target(_target);
-        // _request.set(http::field::host, _host);
-        // std::string auth64 = _user + ":" + _passwd;
-        // _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
-        // _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
         if (_state == State::LOGIN) {
             // No cookie for first login: We are going to receive the cookie on login from the server
@@ -328,40 +332,38 @@ public:
     }
 
     void stop() {
-        // if (_socket.is_open()) {
-        //  boost::system::error_code ec;
-        //  _socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-        //  if (ec) {
-        //      std::cout << "Could not delete client, reason: " << ec.message() << std::endl;
-        //  }
-        // }
+        if (_socket.is_open()) {
+            boost::system::error_code ec;
+            _socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+            if (ec) {
+                std::cout << "Could not delete client, reason: " << ec.message() << std::endl;
+            }
+        }
         // attempt to stop the asio context, then join its thread
         _context.stop();
         // maybe the context will be busy, so we have to wait
         // for it to finish using std::thread.join()
-        if (_thContext.joinable()) {
-            _thContext.join();
-        }
+        // if (_thContext.joinable()) {
+            // _thContext.join();
+        // }
     
         std::cout << "Info      [BIN]: Successfully shut down client.\n";
     }
 
     void configureRequest(const std::string& target, bool useCookie = false) {
-        _request.clear();
+        _request = {};
         _request.version(_version);
         _request.method(http::verb::get);
         // std::string newtarget = "getChartData?chart=temp";
         _request.target(target);
         _request.set(http::field::host, _host);
-        if (!_user.empty() && !_passwd.empty()) {
-            std::string auth64 = _user + ":" + _passwd;
-            _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
-        }
-        _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
-
         if (useCookie) {
             _request.set(http::field::cookie, _sessionCookie);
+        } else if (!_user.empty() && !_passwd.empty()) {
+           std::string auth64 = _user + ":" + _passwd;
+           _request.set(http::field::authorization, "Basic " + Base64Encoder::base64_encode((const uint8_t*)auth64.data(), auth64.length()));
         }
+        _request.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
         /*if (VERBOSITY > 1) {
             std::ostringstream os;
@@ -391,6 +393,10 @@ public:
         }
     }
 
+    bool isBusy() {
+        return !_context.stopped();
+    }
+
 private:
 
     asio::io_context _context;
@@ -414,6 +420,9 @@ private:
     std::string _passwd;
     int _version {11};  // default version is 1.1
     bool _loginStepRequired {false};
+
+    // this string
+    std::string _data;
 
 };
 
